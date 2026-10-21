@@ -218,7 +218,7 @@ export function flushMilestones(): void {
   if (nums.length === 0) return;
   const items = nums.map((n) => ({
     info: milestoneInfo(n),
-    date: store.state.unlocked[String(n)] ?? '',
+    date: store.unlockedAt(n) ?? '',
   }));
   // 等这一帧渲染完再弹，不然卡片的进场动画会被首屏绘制吃掉
   window.setTimeout(() => showMilestone(items[0].info, items[0].date, items.slice(1)), 320);
@@ -230,7 +230,7 @@ export function openMilestoneList(): void {
   const list = milestones(d.cells);
 
   const rows = list.map((n) => {
-    const at = store.state.unlocked[String(n)];
+    const at = store.unlockedAt(n) ?? '';
     const info = milestoneInfo(n);
     const opened = Boolean(at);
     return h(

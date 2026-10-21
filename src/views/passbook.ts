@@ -1,6 +1,6 @@
 /** 存折页：按月分组的存入流水 */
 
-import { type Deposit, derive, money, parseDate, yuan } from '../model';
+import { type Deposit, derive, goalDeposits, money, parseDate, yuan } from '../model';
 import { store } from '../store';
 import { openEditSheet } from '../sheet';
 import { h } from '../ui';
@@ -9,7 +9,8 @@ export function renderPassbook(): HTMLElement {
   const s = store.state;
   const d = derive(s);
 
-  if (s.deposits.length === 0) {
+  const mine = goalDeposits(s);
+  if (mine.length === 0) {
     return h(
       'div',
       { class: 'card' },
@@ -19,7 +20,7 @@ export function renderPassbook(): HTMLElement {
 
   // 已按日期倒序存着，分组时保持顺序
   const groups = new Map<string, Deposit[]>();
-  for (const dep of s.deposits) {
+  for (const dep of mine) {
     const key = dep.date.slice(0, 7);
     const list = groups.get(key);
     if (list) list.push(dep);

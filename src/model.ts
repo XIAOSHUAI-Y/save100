@@ -28,6 +28,8 @@ export interface Deposit {
   createdAt: number;
   /** 这笔钱点亮了哪几格（编号从左上开始，行优先） */
   cells: number[];
+  /** 属于哪个目标 */
+  goalId: string;
 }
 
 /** 一条便签 */
@@ -55,12 +57,32 @@ export interface Settings {
   cols: number;
 }
 
+/**
+ * 一个攒钱目标。
+ *
+ * `Settings` 是「当前目标」的视图，`Goal` 是存起来的所有目标。
+ * 切换目标时把 Goal 的内容搬进 Settings，视图层只认 Settings，不用到处改。
+ */
+export interface Goal {
+  id: string;
+  name: string;
+  target: number;
+  cellValue: number;
+  startDate: string;
+  cols: number;
+}
+
 export interface AppState {
-  version: 1;
+  version: 2;
+  /** 当前目标的设置（含全局的主题） */
   settings: Settings;
+  /** 所有目标 */
+  goals: Goal[];
+  activeGoalId: string;
+  /** 所有目标的存入都在这里，靠 goalId 区分 */
   deposits: Deposit[];
   notes: Note[];
-  /** 已解锁的里程碑：格数 -> 解锁日期 */
+  /** 已解锁的里程碑：`目标id:格数` -> 解锁日期 */
   unlocked: Record<string, string>;
 }
 
@@ -81,14 +103,48 @@ export function clampCols(n: unknown): number {
   return Math.min(COLS_MAX, Math.max(COLS_MIN, v));
 }
 
-export function emptyState(): AppState {
+/** 第一个目标的固定 id，迁移老数据时用它，保证每次加载结果一致 */
+export const FIRST_GOAL_ID = 'g1';
+
+export function goalFromSettings(id: string, s: Settings): Goal {
   return {
-    version: 1,
-    settings: { ...DEFAULT_SETTINGS },
+    id,
+    name: s.goalName,
+    target: s.target,
+    cellValue: s.cellValue,
+    startDate: s.startDate,
+    cols: s.cols,
+  };
+}
+
+/** 把目标摊回 Settings（主题是全局的，由调用方给） */
+export function settingsOfGoal(g: Goal, theme: ThemeId): Settings {
+  return {
+    goalName: g.name,
+    target: g.target,
+    cellValue: g.cellValue,
+    startDate: g.startDate,
+    theme,
+    cols: g.cols,
+  };
+}
+
+export function emptyState(): AppState {
+  const settings = { ...DEFAULT_SETTINGS };
+  return {
+    version: 2,
+    settings,
+    goals: [goalFromSettings(FIRST_GOAL_ID, settings)],
+    activeGoalId: FIRST_GOAL_ID,
     deposits: [],
     notes: [],
     unlocked: {},
   };
+}
+
+/** 当前目标的存入 */
+export function goalDeposits(state: AppState): Deposit[] {
+  return state.deposits.filter((d) => d.goalId === state.activeGoalId);
 }
 
 /** 本地时区的 YYYY-MM-DD（不能用 toISOString，那是 UTC，跨时区会差一天） */
@@ -129,7 +185,7 @@ export function cellCount(settings: Settings): number {
 export function litSet(state: AppState): Set<number> {
   const max = cellCount(state.settings);
   const set = new Set<number>();
-  for (const d of state.deposits) {
+  for (const d of goalDeposits(state)) {
     for (const c of d.cells) {
       if (Number.isInteger(c) && c >= 0 && c < max) set.add(c);
     }
@@ -163,10 +219,11 @@ export interface Derived {
 export function derive(state: AppState): Derived {
   const { target } = state.settings;
   const cells = cellCount(state.settings);
-  const total = state.deposits.reduce((s, d) => s + d.amount, 0);
+  const mine = goalDeposits(state);
+  const total = mine.reduce((s, d) => s + d.amount, 0);
   const lit = litSet(state);
   const litCells = lit.size;
-  const dates = state.deposits.map((d) => d.date).sort();
+  const dates = mine.map((d) => d.date).sort();
   return {
     total,
     cells,
@@ -176,7 +233,7 @@ export function derive(state: AppState): Derived {
     progress: target > 0 ? Math.min(1, total / target) : 0,
     lit,
     done: total >= target,
-    count: state.deposits.length,
+    count: mine.length,
     lastDate: dates.length > 0 ? dates[dates.length - 1] : null,
   };
 }
@@ -336,16 +393,49 @@ export function sanitize(raw: unknown): AppState {
   const num = (v: unknown, fb: number): number =>
     typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fb;
 
-  base.settings = {
-    goalName: typeof s.goalName === 'string' && s.goalName.trim() ? s.goalName.trim() : base.settings.goalName,
-    target: num(s.target, base.settings.target),
-    cellValue: num(s.cellValue, base.settings.cellValue),
-    startDate: typeof s.startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.startDate) ? s.startDate : base.settings.startDate,
-    theme: (['pink', 'mint', 'sky', 'sand', 'violet', 'graphite'] as const).includes(s.theme as ThemeId)
-      ? (s.theme as ThemeId)
-      : base.settings.theme,
-    cols: clampCols(s.cols),
-  };
+  const dateStr = (v: unknown, fb: string): string =>
+    typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : fb;
+
+  const theme = (['pink', 'mint', 'sky', 'sand', 'violet', 'graphite'] as const).includes(s.theme as ThemeId)
+    ? (s.theme as ThemeId)
+    : base.settings.theme;
+
+  // 目标列表：v2 有 goals，v1 只有一份 settings，按 v1 造一个目标
+  const rawGoals = Array.isArray(o.goals) ? o.goals : [];
+  const goals: Goal[] = [];
+  for (const v of rawGoals) {
+    const r = v as Record<string, unknown>;
+    if (!r || typeof r !== 'object') continue;
+    const id = typeof r.id === 'string' && r.id.trim() ? r.id.trim() : uid();
+    if (goals.some((g) => g.id === id)) continue;
+    goals.push({
+      id,
+      name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : '我的目标',
+      target: num(r.target, DEFAULT_SETTINGS.target),
+      cellValue: num(r.cellValue, DEFAULT_SETTINGS.cellValue),
+      startDate: dateStr(r.startDate, base.settings.startDate),
+      cols: clampCols(r.cols),
+    });
+  }
+  if (!goals.length) {
+    goals.push(
+      goalFromSettings(FIRST_GOAL_ID, {
+        goalName: typeof s.goalName === 'string' && s.goalName.trim() ? s.goalName.trim() : base.settings.goalName,
+        target: num(s.target, base.settings.target),
+        cellValue: num(s.cellValue, base.settings.cellValue),
+        startDate: dateStr(s.startDate, base.settings.startDate),
+        theme,
+        cols: clampCols(s.cols),
+      }),
+    );
+  }
+
+  base.goals = goals;
+  const activeId = typeof o.activeGoalId === 'string' && goals.some((g) => g.id === o.activeGoalId)
+    ? o.activeGoalId
+    : goals[0].id;
+  base.activeGoalId = activeId;
+  base.settings = settingsOfGoal(goals.find((g) => g.id === activeId)!, theme);
 
   const ds = Array.isArray(o.deposits) ? o.deposits : [];
   const hadCellsField = ds.some((v) => {
@@ -368,6 +458,11 @@ export function sanitize(raw: unknown): AppState {
         cells: Array.isArray(r.cells)
           ? [...new Set(r.cells.filter((c): c is number => typeof c === 'number' && Number.isInteger(c) && c >= 0))]
           : [],
+        // 老数据没有 goalId，全归到第一个目标
+        goalId:
+          typeof r.goalId === 'string' && goals.some((g) => g.id === r.goalId)
+            ? r.goalId
+            : goals[0].id,
       };
     })
     .filter((v): v is Deposit => v !== null);
@@ -375,8 +470,14 @@ export function sanitize(raw: unknown): AppState {
   const us = (o.unlocked ?? {}) as Record<string, unknown>;
   base.unlocked = {};
   for (const [k, v] of Object.entries(us)) {
-    if (!/^\d+$/.test(k)) continue;
-    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) base.unlocked[k] = v;
+    if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) continue;
+    // v1 的键是纯数字（当时只有一个目标），归到迁移出来的那个目标
+    if (/^\d+$/.test(k)) {
+      base.unlocked[`${goals[0].id}:${k}`] = v;
+      continue;
+    }
+    const m = /^([^:]+):(\d+)$/.exec(k);
+    if (m && goals.some((g) => g.id === m[1])) base.unlocked[k] = v;
   }
 
   const ns = Array.isArray(o.notes) ? o.notes : [];
@@ -401,11 +502,12 @@ export function sanitize(raw: unknown): AppState {
 }
 
 function migrateLegacyCells(state: AppState): void {
-  if (state.deposits.length === 0) return;
+  const mine = goalDeposits(state);
+  if (mine.length === 0) return;
   const max = cellCount(state.settings);
   const value = cellCost(state.settings);
   let cursor = 0;
-  const ordered = [...state.deposits].sort((a, b) =>
+  const ordered = [...mine].sort((a, b) =>
     a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt,
   );
   for (const d of ordered) {

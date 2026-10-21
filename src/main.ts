@@ -18,6 +18,8 @@ import { renderVip } from './views/vip';
 import { flushMilestones } from './views/milestone';
 import { showSplash } from './splash';
 import { startUpdateWatch } from './update';
+import { openGoalSheet } from './goals';
+import { goalDeposits } from './model';
 
 type RouteId = 'grid' | 'passbook' | 'notes' | 'report' | 'themes' | 'activities' | 'vip';
 
@@ -53,7 +55,7 @@ function render(): void {
 
   const goal = h(
     'button',
-    { class: 'goal', type: 'button', onclick: () => go('vip') },
+    { class: 'goal', type: 'button', onclick: () => openGoalSheet() },
     h('span', { class: 'emoji' }, '🎯'),
     h('span', {}, settings.goalName),
     h('span', { class: 'chev' }, '›'),
@@ -109,6 +111,6 @@ showSplash();
 startUpdateWatch();
 
 // 首次打开给个提示，别让人对着空网格不知道怎么开始
-if (store.state.deposits.length === 0) {
+if (goalDeposits(store.state).length === 0) {
   setTimeout(() => toast('点任意方格点亮它，一格 = 一笔钱'), 600);
 }

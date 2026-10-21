@@ -1,15 +1,16 @@
 /** 报告页：月度柱状图 + 速度 + 预测 */
 
-import { byDay, byMonth, derive, forecast, money, shortMoney, streakDays, yuan } from '../model';
+import { byDay, byMonth, derive, forecast, goalDeposits, money, shortMoney, streakDays, yuan } from '../model';
 import { store } from '../store';
 import { h } from '../ui';
 
 export function renderReport(): HTMLElement {
   const s = store.state;
   const d = derive(s);
-  const months = byMonth(s.deposits).slice(-6);
-  const last30 = byDay(s.deposits, 30).reduce((a, b) => a + b, 0);
-  const streak = streakDays(s.deposits);
+  const mine = goalDeposits(s);
+  const months = byMonth(mine).slice(-6);
+  const last30 = byDay(mine, 30).reduce((a, b) => a + b, 0);
+  const streak = streakDays(mine);
   const f = forecast(s, d);
 
   const maxMonth = Math.max(1, ...months.map((m) => m.total));

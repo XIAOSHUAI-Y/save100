@@ -7,6 +7,7 @@
 import {
   type AppState,
   type Deposit,
+  type Goal,
   type Note,
   type Settings,
   type ThemeId,
@@ -14,9 +15,11 @@ import {
   cellCount,
   derive,
   emptyState,
+  goalFromSettings,
   litSet,
   milestones,
   sanitize,
+  settingsOfGoal,
   todayStr,
   uid,
 } from './model';
@@ -37,12 +40,7 @@ class Store {
     this.state = this.load();
     // 打开时就已达成的里程碑直接记成已解锁，不弹卡——
     // 否则老用户一进来会被一串「恭喜达成」糊脸
-    const d = derive(this.state);
-    for (const n of milestones(d.cells)) {
-      if (d.litCells >= n && !this.state.unlocked[String(n)]) {
-        this.state.unlocked[String(n)] = todayStr();
-      }
-    }
+    this.syncUnlocksQuietly();
     this.persist();
   }
 
@@ -76,12 +74,30 @@ class Store {
     this.history = null;
   }
 
+  /** 里程碑按目标独立记：键是 `目标id:格数` */
+  private unlockKey(n: number): string {
+    return `${this.state.activeGoalId}:${n}`;
+  }
+
+  /** 某个里程碑的解锁日期（没解锁返回 undefined） */
+  unlockedAt(n: number): string | undefined {
+    return this.state.unlocked[this.unlockKey(n)];
+  }
+
+  /** 已经达成的里程碑直接记成已解锁，不弹卡 */
+  private syncUnlocksQuietly(): void {
+    const d = derive(this.state);
+    for (const n of milestones(d.cells)) {
+      if (d.litCells >= n && !this.unlockedAt(n)) this.state.unlocked[this.unlockKey(n)] = todayStr();
+    }
+  }
+
   /** 检查新解锁的里程碑；只在 litCells 增加时才会命中 */
   private checkMilestones(): void {
     const d = derive(this.state);
     for (const n of milestones(d.cells)) {
-      if (d.litCells >= n && !this.state.unlocked[String(n)]) {
-        this.state.unlocked[String(n)] = todayStr();
+      if (d.litCells >= n && !this.unlockedAt(n)) {
+        this.state.unlocked[this.unlockKey(n)] = todayStr();
         this.pendingUnlocks.push(n);
       }
     }
@@ -139,6 +155,7 @@ class Store {
       note: input.note?.trim() ?? '',
       createdAt: Date.now(),
       cells,
+      goalId: this.state.activeGoalId,
     };
     this.state.deposits.push(d);
     this.state.deposits.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.createdAt - a.createdAt));
@@ -276,12 +293,108 @@ class Store {
     const shrinks = patch.cols !== undefined && patch.cols < this.state.settings.cols;
     if (shrinks) this.capture();
     this.state.settings = { ...this.state.settings, ...patch };
+    this.syncActiveGoal();
     // 格数变小后，越界的格子不能留：否则「点亮数」会超过总格数
     const max = cellCount(this.state.settings);
     for (const d of this.state.deposits) {
+      if (d.goalId !== this.state.activeGoalId) continue;
       if (d.cells.some((c) => c >= max)) d.cells = d.cells.filter((c) => c < max);
     }
     this.emit();
+  }
+
+  /** 把 settings 里属于目标的部分写回 goals（主题是全局的，不写） */
+  private syncActiveGoal(): void {
+    const g = this.state.goals.find((x) => x.id === this.state.activeGoalId);
+    if (!g) return;
+    const s = this.state.settings;
+    g.name = s.goalName;
+    g.target = s.target;
+    g.cellValue = s.cellValue;
+    g.startDate = s.startDate;
+    g.cols = s.cols;
+  }
+
+  // ---------- 目标 ----------
+
+  /** 切换当前目标 */
+  switchGoal(id: string): boolean {
+    if (id === this.state.activeGoalId) return false;
+    const g = this.state.goals.find((x) => x.id === id);
+    if (!g) return false;
+    this.syncActiveGoal();
+    this.state.activeGoalId = id;
+    this.state.settings = settingsOfGoal(g, this.state.settings.theme);
+    this.syncUnlocksQuietly();
+    this.emit();
+    return true;
+  }
+
+  /** 新建目标并切过去 */
+  addGoal(input: { name: string; target: number; cellValue: number; startDate?: string }): string {
+    this.syncActiveGoal();
+    const theme = this.state.settings.theme;
+    const settings: Settings = {
+      goalName: input.name.trim() || '新目标',
+      target: Math.round(input.target * 100) / 100 || 100_000,
+      cellValue: Math.round(input.cellValue * 100) / 100 || 500,
+      startDate: input.startDate || todayStr(),
+      theme,
+      cols: this.state.settings.cols,
+    };
+    const goal: Goal = goalFromSettings(uid(), settings);
+    this.state.goals.push(goal);
+    this.state.activeGoalId = goal.id;
+    this.state.settings = settingsOfGoal(goal, theme);
+    this.dropHistory();
+    this.emit();
+    return goal.id;
+  }
+
+  /** 删除目标，连带它的存入记录；最后一个目标不能删 */
+  removeGoal(id: string): boolean {
+    if (this.state.goals.length <= 1) return false;
+    const i = this.state.goals.findIndex((g) => g.id === id);
+    if (i < 0) return false;
+    this.state.goals.splice(i, 1);
+    this.state.deposits = this.state.deposits.filter((d) => d.goalId !== id);
+    for (const k of Object.keys(this.state.unlocked)) {
+      if (k.startsWith(`${id}:`)) delete this.state.unlocked[k];
+    }
+    if (this.state.activeGoalId === id) {
+      const next = this.state.goals[0];
+      this.state.activeGoalId = next.id;
+      this.state.settings = settingsOfGoal(next, this.state.settings.theme);
+    }
+    // 删目标不在撤销范围内，旧快照会指向已经不存在的目标
+    this.dropHistory();
+    this.syncUnlocksQuietly();
+    this.emit();
+    return true;
+  }
+
+  /** 目标列表里每一行的数据 */
+  goalSummaries(): { id: string; name: string; total: number; target: number; litCells: number; cells: number; active: boolean }[] {
+    return this.state.goals.map((g) => {
+      const settings = settingsOfGoal(g, this.state.settings.theme);
+      const max = cellCount(settings);
+      const mine = this.state.deposits.filter((d) => d.goalId === g.id);
+      const lit = new Set<number>();
+      let total = 0;
+      for (const d of mine) {
+        total += d.amount;
+        for (const c of d.cells) if (Number.isInteger(c) && c >= 0 && c < max) lit.add(c);
+      }
+      return {
+        id: g.id,
+        name: g.name,
+        total,
+        target: g.target,
+        litCells: lit.size,
+        cells: max,
+        active: g.id === this.state.activeGoalId,
+      };
+    });
   }
 
   setTheme(theme: ThemeId): void {
@@ -298,6 +411,7 @@ class Store {
     try {
       const next = sanitize(JSON.parse(text));
       this.state = next;
+      this.dropHistory();
       this.emit();
       return { ok: true, message: `已导入 ${next.deposits.length} 笔存入、${next.notes.length} 条便签` };
     } catch {
@@ -308,6 +422,7 @@ class Store {
   reset(deposits: boolean, notes: boolean): void {
     if (deposits) this.state.deposits = [];
     if (notes) this.state.notes = [];
+    this.dropHistory();
     this.emit();
   }
 }

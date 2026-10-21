@@ -7,18 +7,20 @@ import {
   cellCount,
   cellIndexAt,
   derive,
+  FIRST_GOAL_ID,
   emptyState,
   forecast,
   litSet,
   money,
   sanitize,
+  settingsOfGoal,
   streakDays,
   todayStr,
 } from './model';
 
 /** 造一笔带格子的存入 */
 function dep(date: string, amount: number, cells: number[] = []): Deposit {
-  return { id: `d${date}${amount}${cells.join('')}`, date, amount, note: '', createdAt: 0, cells };
+  return { id: `d${date}${amount}${cells.join('')}`, date, amount, note: '', createdAt: 0, cells, goalId: FIRST_GOAL_ID };
 }
 
 function withDeposits(list: Deposit[]): AppState {
@@ -213,5 +215,108 @@ describe('money', () => {
     expect(money(100_000)).toBe('10.00万');
     expect(money(1_000_000)).toBe('100万');
     expect(money(1_234)).toBe('1,234');
+  });
+});
+
+describe('多目标', () => {
+  function twoGoals(): AppState {
+    const s = emptyState();
+    s.goals.push({
+      id: 'g2',
+      name: '旅行基金',
+      target: 20_000,
+      cellValue: 500,
+      startDate: '2026-01-01',
+      cols: 20,
+    });
+    return s;
+  }
+
+  it('派生数据只统计当前目标', () => {
+    const s = twoGoals();
+    s.deposits = [
+      dep('2026-01-01', 1_000, [0, 1]),
+      { ...dep('2026-01-02', 2_000, [0, 1, 2, 3]), id: 'x2', goalId: 'g2' },
+    ];
+
+    const a = derive(s);
+    expect(a.total).toBe(1_000);
+    expect(a.litCells).toBe(2);
+    expect(a.count).toBe(1);
+
+    s.activeGoalId = 'g2';
+    s.settings = settingsOfGoal(s.goals[1], 'pink');
+    const b = derive(s);
+    expect(b.total).toBe(2_000);
+    expect(b.litCells).toBe(4);
+    expect(b.cells).toBe(40);
+    expect(b.count).toBe(1);
+  });
+
+  it('两个目标的格子编号互不干扰', () => {
+    const s = twoGoals();
+    s.deposits = [
+      dep('2026-01-01', 500, [0]),
+      { ...dep('2026-01-02', 500, [9]), id: 'x2', goalId: 'g2' },
+    ];
+    expect([...litSet(s)]).toEqual([0]);
+    s.activeGoalId = 'g2';
+    s.settings = settingsOfGoal(s.goals[1], 'pink');
+    expect([...litSet(s)]).toEqual([9]);
+  });
+
+  it('v1 数据迁移成一个目标，里程碑键加上目标前缀', () => {
+    const st = sanitize({
+      version: 1,
+      settings: {
+        goalName: '2026目标',
+        target: 100_000,
+        cellValue: 500,
+        startDate: '2026-01-01',
+        theme: 'mint',
+        cols: 20,
+      },
+      deposits: [{ id: 'a', date: '2026-01-02', amount: 1_000, note: '', createdAt: 1, cells: [0, 1] }],
+      notes: [],
+      unlocked: { '1': '2026-01-02' },
+    });
+
+    expect(st.version).toBe(2);
+    expect(st.goals).toHaveLength(1);
+    expect(st.activeGoalId).toBe(st.goals[0].id);
+    expect(st.settings.goalName).toBe('2026目标');
+    expect(st.settings.theme).toBe('mint');
+    expect(st.deposits[0].goalId).toBe(st.goals[0].id);
+    expect(st.unlocked[`${st.goals[0].id}:1`]).toBe('2026-01-02');
+    expect(derive(st).total).toBe(1_000);
+    expect(derive(st).litCells).toBe(2);
+  });
+
+  it('v2 数据来回一趟不丢目标', () => {
+    const s = twoGoals();
+    s.activeGoalId = 'g2';
+    s.settings = settingsOfGoal(s.goals[1], 'sky');
+    s.deposits = [{ ...dep('2026-01-02', 2_000, [0, 1, 2, 3]), id: 'x2', goalId: 'g2' }];
+
+    const st = sanitize(JSON.parse(JSON.stringify(s)));
+    expect(st.goals).toHaveLength(2);
+    expect(st.activeGoalId).toBe('g2');
+    expect(st.settings.theme).toBe('sky');
+    expect(st.settings.goalName).toBe('旅行基金');
+    expect(derive(st).total).toBe(2_000);
+  });
+
+  it('未知 goalId 的存入归到第一个目标，不会消失', () => {
+    const st = sanitize({
+      version: 2,
+      goals: [{ id: 'a1', name: 'A', target: 10_000, cellValue: 500, startDate: '2026-01-01', cols: 20 }],
+      activeGoalId: 'a1',
+      deposits: [{ id: 'z', date: '2026-01-05', amount: 500, note: '', createdAt: 1, cells: [0], goalId: '不存在' }],
+      notes: [],
+      unlocked: {},
+    });
+    expect(st.deposits).toHaveLength(1);
+    expect(st.deposits[0].goalId).toBe('a1');
+    expect(derive(st).total).toBe(500);
   });
 });
