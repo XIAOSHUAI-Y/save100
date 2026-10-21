@@ -98,9 +98,17 @@ export function openDepositSheet(preset: { amount?: number; note?: string } = {}
       amount.focus();
       return;
     }
-    store.addDeposit({ amount: v, date: date.value || todayStr(), note: note.value });
-    const after = derive(store.state);
-    toast(`已存 ${yuan(v)} 元 · 点亮 ${after.litCells} 格`);
+    // 一笔金额会折算成若干格，格子不够就别记进去，否则金额和格数对不上
+    const cost = cellCost(store.state.settings);
+    const before = derive(store.state);
+    const need = Math.floor(v / cost);
+    if (need > before.restCells) {
+      toast(`只剩 ${before.restCells} 格，最多还能存 ${yuan(before.restCells * cost)} 元`);
+      return;
+    }
+    const d = store.addDeposit({ amount: v, date: date.value || todayStr(), note: note.value });
+    const lit = d?.cells.length ?? 0;
+    toast(lit > 0 ? `已存 ${yuan(v)} 元 · 点亮 ${lit} 格` : `已存 ${yuan(v)} 元`);
     closeSheet();
   };
 
