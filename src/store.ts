@@ -30,6 +30,8 @@ class Store {
   private listeners = new Set<Listener>();
   /** 刚解锁、还没弹过的里程碑 */
   pendingUnlocks: number[] = [];
+  /** 上一次数据改动前的 deposits 快照，只留一份，用来撤销 */
+  private history: Deposit[] | null = null;
 
   constructor() {
     this.state = this.load();
@@ -49,6 +51,29 @@ class Store {
     const out = this.pendingUnlocks;
     this.pendingUnlocks = [];
     return out;
+  }
+
+  /** 改动 deposits 之前先存一份，撤销就是把它放回去 */
+  private capture(): void {
+    this.history = structuredClone(this.state.deposits);
+  }
+
+  canUndo(): boolean {
+    return this.history !== null;
+  }
+
+  /** 回到上一次改动之前；成功返回 true */
+  undo(): boolean {
+    if (!this.history) return false;
+    this.state.deposits = this.history;
+    this.history = null;
+    this.emit();
+    return true;
+  }
+
+  /** 导入 / 清空这类整体替换之后，旧快照就没意义了 */
+  dropHistory(): void {
+    this.history = null;
   }
 
   /** 检查新解锁的里程碑；只在 litCells 增加时才会命中 */
@@ -103,6 +128,7 @@ class Store {
   addDeposit(input: { amount: number; date?: string; note?: string; cells?: number[] }): Deposit | null {
     const amount = Math.round(input.amount * 100) / 100;
     if (!(amount > 0)) return null;
+    this.capture();
     const cells = input.cells
       ? [...new Set(input.cells)]
       : this.nextCells(Math.floor(amount / cellCost(this.state.settings)));
@@ -148,6 +174,7 @@ class Store {
     const cell = cellCost(this.state.settings);
     const dep = this.state.deposits.find((d) => d.cells.includes(index));
     if (!dep) return;
+    this.capture();
     dep.cells = dep.cells.filter((c) => c !== index);
     dep.amount = Math.round((dep.amount - cell) * 100) / 100;
     if (dep.amount <= 0) {
@@ -164,6 +191,7 @@ class Store {
   unlightCells(indices: number[]): number {
     const targets = new Set(indices);
     if (!targets.size) return 0;
+    this.capture();
     const cell = cellCost(this.state.settings);
     let removed = 0;
 
@@ -186,6 +214,7 @@ class Store {
   updateDeposit(id: string, patch: Partial<Pick<Deposit, 'amount' | 'date' | 'note'>>): void {
     const d = this.state.deposits.find((x) => x.id === id);
     if (!d) return;
+    this.capture();
     if (patch.amount !== undefined && patch.amount > 0) d.amount = Math.round(patch.amount * 100) / 100;
     if (patch.date) d.date = patch.date;
     if (patch.note !== undefined) d.note = patch.note.trim();
@@ -195,6 +224,7 @@ class Store {
   removeDeposit(id: string): void {
     const i = this.state.deposits.findIndex((x) => x.id === id);
     if (i < 0) return;
+    this.capture();
     this.state.deposits.splice(i, 1);
     this.emit();
   }
@@ -243,6 +273,8 @@ class Store {
   // ---------- 设置 ----------
 
   patchSettings(patch: Partial<Settings>): void {
+    const shrinks = patch.cols !== undefined && patch.cols < this.state.settings.cols;
+    if (shrinks) this.capture();
     this.state.settings = { ...this.state.settings, ...patch };
     // 格数变小后，越界的格子不能留：否则「点亮数」会超过总格数
     const max = cellCount(this.state.settings);

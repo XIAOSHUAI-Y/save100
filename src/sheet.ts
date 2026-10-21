@@ -3,6 +3,7 @@
 import { cellCost, derive, todayStr, yuan } from './model';
 import { store } from './store';
 import { h, toast } from './ui';
+import { offerUndo } from './undo';
 
 let mask: HTMLElement | null = null;
 let sheet: HTMLElement | null = null;
@@ -108,8 +109,8 @@ export function openDepositSheet(preset: { amount?: number; note?: string } = {}
     }
     const d = store.addDeposit({ amount: v, date: date.value || todayStr(), note: note.value });
     const lit = d?.cells.length ?? 0;
-    toast(lit > 0 ? `已存 ${yuan(v)} 元 · 点亮 ${lit} 格` : `已存 ${yuan(v)} 元`);
     closeSheet();
+    offerUndo(lit > 0 ? `已存 ${yuan(v)} 元 · 点亮 ${lit} 格` : `已存 ${yuan(v)} 元`, () => store.undo());
   };
 
   amount.addEventListener('keydown', (e) => {
@@ -161,15 +162,15 @@ export function openEditSheet(id: string): void {
       return;
     }
     store.updateDeposit(id, { amount: v, date: date.value || d.date, note: note.value });
-    toast('已保存');
     closeSheet();
+    offerUndo('已保存这笔修改', () => store.undo());
   };
 
   const del = (): void => {
     if (!window.confirm('删除这笔存入？')) return;
     store.removeDeposit(id);
-    toast('已删除');
     closeSheet();
+    offerUndo(`已删除这笔存入（${yuan(d.amount)} 元）`, () => store.undo());
   };
 
   mount(
@@ -233,7 +234,7 @@ export function openCellSheet(index: number): void {
             onclick: () => {
               store.unlightCell(index);
               closeSheet();
-              toast(`已取消第 ${index + 1} 格`);
+              offerUndo(`已取消第 ${index + 1} 格 · 退回 ${yuan(cost)} 元`, () => store.undo());
             },
           },
           `取消点亮 −¥${yuan(cost)}`,
@@ -251,7 +252,7 @@ export function openCellSheet(index: number): void {
             onclick: () => {
               store.lightCell(index);
               closeSheet();
-              toast(`第 ${index + 1} 格点亮 · 存 ${yuan(cost)}`);
+              offerUndo(`第 ${index + 1} 格点亮 · 存 ${yuan(cost)} 元`, () => store.undo());
             },
           },
           `点亮 +¥${yuan(cost)}`,

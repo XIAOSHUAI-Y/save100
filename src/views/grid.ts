@@ -4,7 +4,8 @@ import { COLS_MAX, COLS_MIN, clampCols, cellIndexAt, derive, money, shortMoney, 
 import { store } from '../store';
 import { openCellSheet } from '../sheet';
 import { attachDragSelect } from '../dragselect';
-import { toast } from '../ui';
+
+import { offerUndo } from '../undo';
 import { openMilestoneList } from './milestone';
 import { h } from '../ui';
 
@@ -81,11 +82,11 @@ export function renderGrid(): HTMLElement {
     onLight: (list) => {
       const amount = Math.round(list.length * cellValue * 100) / 100;
       store.addDeposit({ amount, cells: list });
-      toast(`点亮 ${list.length} 格 · 存下 ${yuan(amount)} 元`);
+      offerUndo(`点亮 ${list.length} 格 · 存下 ${yuan(amount)} 元`, () => store.undo());
     },
     onUnlight: (list) => {
       const removed = store.unlightCells(list);
-      toast(`已取消点亮 ${removed} 格 · 退回 ${yuan(removed * cellValue)} 元`);
+      offerUndo(`已取消点亮 ${removed} 格 · 退回 ${yuan(removed * cellValue)} 元`, () => store.undo());
     },
   });
 

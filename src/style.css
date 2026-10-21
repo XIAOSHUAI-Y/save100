@@ -1744,3 +1744,50 @@ main {
 .drag-badge.removing {
   background: var(--text);
 }
+
+/* ---------- 可撤销的操作提示 ---------- */
+.undo-bar {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  z-index: 66;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 430px;
+  margin: 0 auto;
+  padding: 10px 12px 10px 16px;
+  border-radius: 16px;
+  background: rgba(50, 32, 38, 0.94);
+  box-shadow: 0 12px 30px rgba(60, 35, 45, 0.2);
+  transform: translateY(12px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.undo-bar.show {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.undo-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #fff;
+}
+
+.undo-btn {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--on-strong);
+  background: #fff;
+}
