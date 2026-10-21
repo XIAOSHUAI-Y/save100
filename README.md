@@ -104,6 +104,26 @@ npm run build    # 产物在 dist/，丢给任意静态服务器即可
   index.html，拿到新的带哈希资源；加载后把 `?v=` 从地址栏清掉，hash 路由不受影响。
   **数据全在 localStorage，刷新不影响**。
 
+## 部署
+
+线上地址：https://xiaoshuai-y.github.io/save100/
+
+GitHub Pages 从 `gh-pages` 分支根目录发布，`master` 只放源码。
+
+```bash
+npm run deploy    # 构建 + 把 dist 推到 gh-pages
+```
+
+几点约束：
+
+- 构建时 `base` 是 `/save100/`（子路径），dev 仍是 `/`，所以本地开发网址不变。
+- **没有加 GitHub Actions**：当前 `gh` token 缺 `workflow` 权限，推不了
+  `.github/workflows/`。想改成 push 即部署，先 `gh auth refresh -h github.com -s workflow`
+  再加 workflow，然后把 Pages 的 Source 切到 GitHub Actions。
+- `.nojekyll` 由部署脚本自动生成，避免 Jekyll 处理静态文件。
+- **数据不跨域名**：`localStorage` 按 origin 隔离，`192.169.1.138:5190` 上的记录不会自动
+  出现在线上。换到线上时用 App 里的「导出 / 导入」搬一次。
+
 ## 数据
 
 全部在 `localStorage` 的 `save100.state.v1`：
