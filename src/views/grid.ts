@@ -3,6 +3,8 @@
 import { COLS_MAX, COLS_MIN, clampCols, cellIndexAt, derive, money, shortMoney, yuan } from '../model';
 import { store } from '../store';
 import { openCellSheet } from '../sheet';
+import { attachDragSelect } from '../dragselect';
+import { toast } from '../ui';
 import { openMilestoneList } from './milestone';
 import { h } from '../ui';
 
@@ -70,6 +72,19 @@ export function renderGrid(): HTMLElement {
     }
   }
 
+  const gridEl = h('div', { class: 'grid', style: { '--cols': String(cols) } }, ...cells);
+
+  // 长按拖选一片格子，松手一次性点亮
+  attachDragSelect(gridEl, {
+    cellValue: () => cellValue,
+    isLit: (i) => d.lit.has(i),
+    onCommit: (list) => {
+      const amount = Math.round(list.length * cellValue * 100) / 100;
+      store.addDeposit({ amount, cells: list });
+      toast(`点亮 ${list.length} 格 · 存下 ${yuan(amount)} 元`);
+    },
+  });
+
   const gridCard = h(
     'section',
     { class: 'card' },
@@ -87,7 +102,7 @@ export function renderGrid(): HTMLElement {
       ),
     ),
     sizeRow(cols),
-    h('div', { class: 'grid', style: { '--cols': String(cols) } }, ...cells),
+    gridEl,
   );
 
   const motto = h('p', { class: 'motto' }, d.done ? '目标达成，了不起 🎉' : '千里之行，始于足下 💪');
