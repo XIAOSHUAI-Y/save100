@@ -1734,3 +1734,13 @@ main {
   pointer-events: none;
   animation: upd-in 160ms ease both;
 }
+
+/* 拖选时被划到的已亮格子：淡下去，表示松手就会被取消 */
+.cell.removing {
+  opacity: 0.35;
+  box-shadow: inset 0 0 0 2px var(--on-strong);
+}
+
+.drag-badge.removing {
+  background: var(--text);
+}

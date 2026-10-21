@@ -5,6 +5,8 @@
  * 长按 240ms（手指还没动）先进入选择模式，之后才拦滚动。
  * 鼠标没有这个冲突，拖过 8px 就直接进入选择。
  *
+ * 按在已点亮的格子上就进入「取消」模式：划过的格子会被取消点亮，松手一次性移除。
+ *
  * 单击仍然是打开单格弹层，不受影响。
  */
 
@@ -17,7 +19,10 @@ type Options = {
   /** 每格多少钱，用来算提示里的总额 */
   cellValue: () => number;
   isLit: (index: number) => boolean;
-  onCommit: (cells: number[]) => void;
+  /** 划过的空格子 → 点亮 */
+  onLight: (cells: number[]) => void;
+  /** 划过的已亮格子 → 取消点亮 */
+  onUnlight: (cells: number[]) => void;
 };
 
 export function attachDragSelect(grid: HTMLElement, opts: Options): void {
@@ -29,6 +34,11 @@ export function attachDragSelect(grid: HTMLElement, opts: Options): void {
   let selected = new Set<number>();
   let badge: HTMLElement | null = null;
   let suppressClick = false;
+  let action: 'light' | 'unlight' = 'light';
+
+  /** 这一格在当前动作下是否该被选中 */
+  const wanted = (idx: number): boolean =>
+    action === 'light' ? !opts.isLit(idx) : opts.isLit(idx);
 
   const cellOf = (x: number, y: number): HTMLElement | null => {
     const el = document.elementFromPoint(x, y);
@@ -40,24 +50,30 @@ export function attachDragSelect(grid: HTMLElement, opts: Options): void {
   const refreshBadge = (): void => {
     if (!badge) return;
     const n = selected.size;
-    badge.textContent = n ? `点亮 ${n} 格 · ${yuan(n * opts.cellValue())} 元` : '划过格子来选择';
+    const verb = action === 'light' ? '点亮' : '取消';
+    badge.textContent = n ? `${verb} ${n} 格 · ${yuan(n * opts.cellValue())} 元` : '划过格子来选择';
   };
 
   const paint = (cell: HTMLElement): void => {
     const idx = Number(cell.dataset.idx);
-    if (!Number.isFinite(idx) || selected.has(idx) || opts.isLit(idx)) return;
+    if (!Number.isFinite(idx) || selected.has(idx) || !wanted(idx)) return;
     selected.add(idx);
-    cell.classList.add('choosing');
+    cell.classList.add(action === 'light' ? 'choosing' : 'removing');
     refreshBadge();
   };
 
   const begin = (idx: number): void => {
     mode = 'select';
     selected = new Set();
+    // 按在已点亮的格子上 → 取消模式；按在空格子上 → 点亮模式
+    action = opts.isLit(idx) ? 'unlight' : 'light';
     grid.classList.add('selecting');
     badge = document.createElement('div');
-    badge.className = 'drag-badge';
+    badge.className = action === 'unlight' ? 'drag-badge removing' : 'drag-badge';
     document.body.append(badge);
+
+    // 把还在显示的提示收起来，免得和下面的徽标叠在一起
+    document.getElementById('toast')?.classList.remove('show');
 
     const first = grid.querySelector(`[data-idx="${idx}"]`);
     if (first instanceof HTMLElement) paint(first);
@@ -79,21 +95,25 @@ export function attachDragSelect(grid: HTMLElement, opts: Options): void {
     grid.classList.remove('selecting');
     badge?.remove();
     badge = null;
-    grid.querySelectorAll('.cell.choosing').forEach((el) => el.classList.remove('choosing'));
+    grid
+      .querySelectorAll('.cell.choosing, .cell.removing')
+      .forEach((el) => el.classList.remove('choosing', 'removing'));
     selected = new Set();
     mode = 'idle';
   };
 
   const commit = (): void => {
-    const cells = [...selected].filter((i) => !opts.isLit(i));
+    const act = action;
+    const cells = [...selected].filter(wanted);
     cleanup();
     if (!cells.length) return;
-    // 一次拖选记成一笔存入，金额和格数严格对应
+    // 拖选结束后的那次 click 别当成单击
     suppressClick = true;
     window.setTimeout(() => {
       suppressClick = false;
     }, 400);
-    opts.onCommit(cells);
+    if (act === 'light') opts.onLight(cells);
+    else opts.onUnlight(cells);
   };
 
   // 拖选结束的那次 click 不要当成单击打开弹层

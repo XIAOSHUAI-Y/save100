@@ -78,10 +78,14 @@ export function renderGrid(): HTMLElement {
   attachDragSelect(gridEl, {
     cellValue: () => cellValue,
     isLit: (i) => d.lit.has(i),
-    onCommit: (list) => {
+    onLight: (list) => {
       const amount = Math.round(list.length * cellValue * 100) / 100;
       store.addDeposit({ amount, cells: list });
       toast(`点亮 ${list.length} 格 · 存下 ${yuan(amount)} 元`);
+    },
+    onUnlight: (list) => {
+      const removed = store.unlightCells(list);
+      toast(`已取消点亮 ${removed} 格 · 退回 ${yuan(removed * cellValue)} 元`);
     },
   });
 

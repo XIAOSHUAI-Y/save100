@@ -156,6 +156,33 @@ class Store {
     this.emit();
   }
 
+  /**
+   * 一次取消点亮多格（拖选批量取消用）。
+   * 语义和 unlightCell 一样：从点亮它的那笔里摘掉、金额减掉对应格数，减到 0 就删掉这笔。
+   * 多个格子可能来自不同的存入，所以逐笔处理，最后只 emit 一次。
+   */
+  unlightCells(indices: number[]): number {
+    const targets = new Set(indices);
+    if (!targets.size) return 0;
+    const cell = cellCost(this.state.settings);
+    let removed = 0;
+
+    for (const dep of [...this.state.deposits]) {
+      const keep = dep.cells.filter((c) => !targets.has(c));
+      const hit = dep.cells.length - keep.length;
+      if (!hit) continue;
+      removed += hit;
+      dep.cells = keep;
+      dep.amount = Math.round((dep.amount - hit * cell) * 100) / 100;
+      if (dep.amount <= 0 || !keep.length) {
+        this.state.deposits = this.state.deposits.filter((d) => d.id !== dep.id);
+      }
+    }
+
+    if (removed) this.emit();
+    return removed;
+  }
+
   updateDeposit(id: string, patch: Partial<Pick<Deposit, 'amount' | 'date' | 'note'>>): void {
     const d = this.state.deposits.find((x) => x.id === id);
     if (!d) return;
